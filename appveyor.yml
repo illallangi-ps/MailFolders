@@ -1,0 +1,131 @@
+#---------------------------------#
+#      general configuration      #
+#---------------------------------#
+
+# version format
+version: 1.0.{build}
+
+# branches to build
+branches:
+  # whitelist
+  only:
+    - master
+
+# Do not build on tags
+skip_tags: true
+
+#---------------------------------#
+#    environment configuration    #
+#---------------------------------#
+
+# Build worker image (VM template)
+image: Visual Studio 2017
+
+# environment variables
+environment:
+  NuGetGalleryKey:
+    secure: yoWqgSa+2csVDnrUJPNSH3wuwtjn2QPrqBxkRDt/ibpWoRXKu8A0uulGyaU+/ob/
+  PowerShellGalleryKey:
+    secure: VSxg/rbJZ/F5F6brUgHJYLOlpK8SINfXl6W0bYC8V1GMoMzplCxfE944nysyS0GX
+  GitHubKey:
+    secure: AYCqIjYRtGo9Sa3J9RQREPwICRjTT0nNCO+87sV9bbZZxqSbZnJpWN461fynib1o
+
+install:
+- ps: |
+    Install-PackageProvider -Name NuGet -Force
+
+#---------------------------------#
+#       build configuration       #
+#---------------------------------#
+
+# build Configuration, i.e. Debug, Release, etc.
+configuration: Release
+
+# Build settings, not to be confused with "before_build" and "after_build".
+build:
+  # enable MSBuild parallel builds
+  parallel: true
+  # package projects with .nuspec files and push to artifacts
+  publish_nuget: true
+  # generate and publish NuGet symbol packages
+  publish_nuget_symbols: true
+
+# scripts to run before build
+before_build:
+  - ps: >-
+  
+      if (Test-Path -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\")
+      {
+        foreach ($name in (Get-ChildItem -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\" -Directory |%{ $_.Name.Replace("Illallangi.","") }))
+        {
+          Write-Host "Update-ModuleManifest -Path ""$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)\Illallangi.$($name).psd1"" -ModuleVersion ""$($env:APPVEYOR_BUILD_VERSION)"""
+          Update-ModuleManifest -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)\Illallangi.$($name).psd1" -ModuleVersion "$($env:APPVEYOR_BUILD_VERSION)"
+        }
+      }
+
+build_script:
+  - ps: >-
+      $true
+
+# scripts to run after build (working directory and environment changes are persisted from the previous steps)
+after_build:
+  - ps: >-
+  
+      function ZipFiles($zipfilename, $sourcedir)
+
+      {
+         [Reflection.Assembly]::LoadWithPartialName("System.IO.Compression.FileSystem")
+         $compressionLevel = [System.IO.Compression.CompressionLevel]::Optimal
+         [System.IO.Compression.ZipFile]::CreateFromDirectory($sourcedir, $zipfilename, $compressionLevel, $true)
+      }
+
+      if (Test-Path -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\")
+      {
+        foreach ($name in (Get-ChildItem -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\" -Directory |%{ $_.Name.Replace("Illallangi.","") }))
+        {
+          Write-Host "ZipFiles ""$($env:APPVEYOR_BUILD_FOLDER)\$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip"" ""$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)"""
+          ZipFiles "$($env:APPVEYOR_BUILD_FOLDER)\$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip" "$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)"
+          Write-Host "Push-AppveyorArtifact ""$($env:APPVEYOR_BUILD_FOLDER)\$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip"" -FileName ""$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip"""
+          Push-AppveyorArtifact "$($env:APPVEYOR_BUILD_FOLDER)\$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip" -FileName "$($name)-v$($env:APPVEYOR_BUILD_VERSION).zip"
+        }
+      }
+
+  - ps: >-
+  
+      if (Test-Path -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\")
+      {
+        foreach ($name in (Get-ChildItem -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\" -Directory |%{ $_.Name.Replace("Illallangi.","") }))
+        {
+          Write-Host "Publish-Module -Path ""$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)"" -NuGetApiKey ""$($env:PowerShellGalleryKey)"""
+          Publish-Module -Path "$($env:APPVEYOR_BUILD_FOLDER)\src\Illallangi.$($name)" -NuGetApiKey "$($env:PowerShellGalleryKey)"
+        }
+      }
+
+#---------------------------------#
+#     deployment configuration    #
+#---------------------------------#
+
+deploy:
+# Deploy to GitHub Releases
+  - provider: GitHub
+    release: v$(appveyor_build_version)
+    auth_token: $(GitHubKey)
+    artifact: /.*\.zip/
+    draft: false
+    prerelease: false
+    on:
+      branch: master
+
+#---------------------------------#
+#         notifications           #
+#---------------------------------#
+
+notifications:
+
+  # Email
+  - provider: Email
+    to:
+      - andrew.cole@illallangi.com
+    subject: 'Build {{status}}'
+    message: "{{message}}, {{commitId}}, ..."
+    on_build_status_changed: true
